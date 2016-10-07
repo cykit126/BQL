@@ -1,0 +1,505 @@
+Package io.baxian.bql.framework;
+
+Helpers
+    letter = [['a' .. 'z'] + ['A' .. 'Z']] ;
+    blank = (' ' | 13 | 10 | 9) ;
+    digit = ['0' .. '9'] ;
+    positive_digit = ['1' .. '9'] ;
+    all = [0 .. 0xFFFF] ;
+    not_crlf = [all - [10 + 13]] ;
+    escaped_char = '\' ''' ;
+    char = [all - [''' + '\' ]] ;
+    positive_int = '-'? positive_digit digit* ;
+
+Tokens
+    select = ('select' | 'SELECT') ;
+    delete = ('delete' | 'DELETE') ;
+    update = ('update' | 'UPDATE') ;
+    insert = ('insert' | 'INSERT') ;
+    into = ('into' | 'INTO') ;
+    as = ('as' | 'AS') ;
+    from = ('from' | 'FROM') ;
+    where = ('where' | 'WHERE') ;
+    and = ('and' | 'AND') ;
+    or = ('or' | 'OR') ;
+    not = ('not' | 'NOT') ;
+    is = ('is' | 'IS') ;
+    like = ('like' | 'LIKE') ;
+    in = ('in' | 'IN') ;
+    true = ('true' | 'TRUE') ;
+    false = ('false' | 'FALSE') ;
+    between = ('between' | 'BETWEEN') ;
+    order = ('order' | 'ORDER') ;
+    group = ('group' | 'GROUP') ;
+    by = ('by' | 'BY') ;
+    partition = ('partition' | 'PARTITION') ;
+    limit = ('limit' | 'LIMIT') ;
+    desc = ('desc' | 'DESC') ;
+    asc = ('asc' | 'ASC') ;
+    null = ('null' | 'NULL') ;
+    set = ('set' | 'SET' ) ;
+    values = ('values' | 'VALUES') ;
+    on = ('on' | 'ON') ;
+    duplicate = ('duplicate' | 'DUPLICATE' ) ;
+    key = ( 'key' | 'KEY' ) ;
+    distinct = ('distinct' | 'DISTINCT' );
+
+    lparen = '(' ;
+    rparen = ')' ;
+    dot = '.' ;
+    comma = ',' ;
+    colon = ':' ;
+    quote = '`' ;
+
+    lt = '<' ;
+    gt = '>' ;
+    lteq = '<=' ;
+    gteq = '>=' ;
+    eq = '=' ;
+    not_eq = ('!=' | '<>') ;
+
+    // operator class 1
+    bit_invert = '~';
+
+    // operator class 2
+    mul = '*' ;
+    div = '/' ;
+    mod = '%' ;
+
+    // operator class 3
+    add = '+' ;
+    sub = '-' ;
+
+    // operator class 4
+    bit_and = '&' ;
+
+    // operator class 5
+    bit_xor = '^';
+
+    // operator class 6
+    bit_or = '|' ;
+
+    // operator class 7
+    lshift = '<<' ;
+    rshift = '>>' ;
+
+    blanks = blank+ ;
+
+    identifier = letter (letter | digit | '_')* ;
+
+    octet = '-'? '0' positive_digit digit* ;
+    hex = '-'? '0' ('X'|'x') positive_digit digit* ;
+    int = ( '0' | positive_int ) ;
+    float = '-'? digit+ '.' digit+ ;
+    scientific = '-'? positive_digit ('.' digit+)? ['e' + 'E'] ('+'|'-') digit+ ;
+
+    string = ''' (escaped_char | char)* ''' ;
+    single_quote = ''' ;
+
+Ignored Tokens
+    blanks ;
+
+Productions
+    statement {-> statement }
+        = {select} select_statement {-> select_statement.statement }
+        | {delete} delete_statement {-> delete_statement.statement }
+        | {update} update_statement {-> update_statement.statement }
+        | {insert} insert_statement {-> insert_statement.statement }
+        ;
+
+    select_statement {-> statement }
+        = {select} T.select [selected_columns]:column_list
+          T.from table
+          partition_clause
+          where_clause
+          group_by_clause
+          order_by_clause
+          limit_clause
+          {-> New statement.select([selected_columns.column],
+                                   table.table,
+                                   [partition_clause.value],
+                                   where_clause.expr,
+                                   [group_by_clause.column_components],
+                                   [order_by_clause.order_by_item],
+                                   limit_clause.limit) }
+          ;
+
+    delete_statement {-> statement }
+        = {delete} T.delete T.from? table where_clause limit_clause
+          {-> New statement.delete(table.table, where_clause.expr, limit_clause.limit) }
+        ;
+
+    update_statement {-> statement }
+        = {update} T.update table
+          T.set [columns]:update_column_list
+          where_clause
+          limit_clause
+          {-> New statement.update(table.table, [columns.update_column], where_clause.expr, limit_clause.limit) }
+        ;
+
+    insert_statement {-> statement }
+        = {insert} T.insert T.into table
+          lparen insert_column_list rparen
+          T.values
+          insert_row_list
+          update_clause
+          {-> New statement.insert(table.table, [insert_column_list.identifier], [insert_row_list.row], [update_clause.update_column]) }
+        ;
+
+    update_clause {-> update_column* }
+        = {update} T.on T.duplicate T.key T.update update_column_list {-> [update_column_list.update_column] }
+        | {empty} {-> [] }
+        ;
+
+    insert_row_list {-> P.row* }
+        = insert_row insert_row_list_tail* {-> [insert_row.row, insert_row_list_tail.row] }
+        ;
+
+    insert_row_list_tail {-> P.row }
+        = T.comma insert_row {-> insert_row.row }
+        ;
+
+    insert_row {-> P.row }
+        = lparen insert_value insert_value_list_tail* rparen {-> New row([insert_value.value, insert_value_list_tail.value]) }
+        ;
+
+    insert_value_list_tail {-> value }
+        = T.comma insert_value {-> insert_value.value }
+        ;
+
+    insert_value {-> value }
+        = value {-> value.value}
+        ;
+
+    insert_column_list {-> identifier* }
+        = insert_column insert_column_list_tail* {-> [insert_column.identifier, insert_column_list_tail.identifier] }
+        ;
+
+    insert_column_list_tail {-> identifier }
+        = T.comma insert_column {-> insert_column.identifier }
+        ;
+
+    insert_column {-> identifier }
+        = {unquoted} identifier {-> identifier }
+        | {quoted} [left]:quote identifier [right]:quote {-> identifier}
+        ;
+
+    update_column_list {-> update_column* }
+        = update_column update_column_list_tail* {-> [update_column.update_column, update_column_list_tail.update_column] }
+        ;
+
+    update_column {-> update_column }
+        = column_components T.eq value {-> New update_column(column_components.column_components, value.value) }
+        ;
+
+    update_column_list_tail {-> update_column }
+        = T.comma update_column {-> update_column.update_column }
+        ;
+
+    column_list {-> column* }
+        = select_column column_list_tail* {-> [select_column.column, column_list_tail.column] }
+        ;
+
+    column_list_tail {-> column }
+        = T.comma select_column {-> select_column.column }
+        ;
+
+    select_column {-> column }
+        = {column} column {-> column.column }
+        | {function} function {-> function.column }
+        ;
+
+    column {-> column }
+        = {without_alias} column_components {-> New column(Null, [column_components.column_components], Null, Null) }
+        | {without_alias_distinct} T.distinct column_components {-> New column(Null, [column_components.column_components], Null, T.distinct) }
+        | {with_alias} column_components column_alias {-> New column(Null, [column_components.column_components], column_alias.identifier, Null) }
+        | {with_alias_distinct} T.distinct column_components column_alias {-> New column(Null, [column_components.column_components], column_alias.identifier, Null) }
+        ;
+
+    column_alias {-> identifier }
+        = as component {-> component.identifier }
+        ;
+
+    column_components {-> column_components }
+        = {schema} [schema]:component [schema_dot]:dot [table]:component [table_dot]:dot [column]:component {-> New column_components(schema.identifier, table.identifier, column.identifier) }
+        | {table} [table]:component [table_dot]:dot [column]:component {-> New column_components(Null, table.identifier, column.identifier) }
+        | {column} [column]:component {-> New column_components(Null, Null, column.identifier) }
+        ;
+
+    function {-> column }
+        = T.identifier lparen function_column_list rparen column_alias
+          {-> New column(T.identifier, [function_column_list.column_components], column_alias.identifier, Null) }
+        ;
+
+    function_column_list {-> column_components* }
+        = column_components function_column_list_tail* {-> [column_components.column_components, function_column_list_tail.column_components] }
+        ;
+
+    function_column_list_tail {-> column_components }
+        = T.comma column_components {-> column_components.column_components }
+        ;
+
+    partition_clause {-> value* }
+        = {empty} {-> []}
+        | T.partition T.lparen partition_list T.rparen {-> [partition_list.value] }
+        ;
+
+    partition_list {-> value* }
+        = partition_item partition_list_tail* {-> [partition_item.value, partition_list_tail.value] }
+        ;
+
+    partition_list_tail {-> value }
+        = comma partition_item {-> partition_item.value }
+        ;
+
+    partition_item {-> value }
+        = {option} option {-> option.value }
+        | {identifier} identifier {-> New value.identifier(identifier) }
+        ;
+
+    where_clause {-> expr? }
+        = {condition} T.where expr {-> expr.expr }
+        | {empty} {-> Null }
+        ;
+
+    expr {-> expr }
+        = {or} expr or expr_factor {-> New expr.condition(New op.or(), expr.expr, expr_factor.expr) }
+        | {factor} expr_factor {-> expr_factor.expr}
+        ;
+
+    expr_factor {-> expr }
+        = {and} expr_factor and expr_factor2 {-> New expr.condition(New op.and(), expr_factor.expr, expr_factor2.expr) }
+        | {expr} expr_factor2 {-> expr_factor2.expr}
+        ;
+
+    expr_factor2 {-> expr }
+        = {less_than} [left]:value lt [right]:value {-> New expr.binary(New op.lt(), left.value, right.value) }
+        | {greater_than} [left]:value gt [right]:value {-> New expr.binary(New op.gt(), left.value, right.value) }
+        | {less_than_or_equal} [left]:value lteq [right]:value {-> New expr.binary(New op.lteq(), left.value, right.value) }
+        | {greater_than_or_equal} [left]:value gteq [right]:value {-> New expr.binary(New op.gteq(), left.value, right.value) }
+        | {equal} [left]:value eq [right]:value {-> New expr.binary(New op.eq(), left.value, right.value) }
+        | {not_equal} [left]:value not_eq [right]:value {-> New expr.binary(New op.not_eq(), left.value, right.value) }
+        | {between} column_components T.between [left]:value T.and [right]:value {-> New expr.between(column_components.column_components, left.value, right.value) }
+        | {in} column_components T.in T.lparen value_list T.rparen {-> New expr.in(column_components.column_components, [value_list.value]) }
+        | {not_in} column_components T.not T.in T.lparen value_list T.rparen {-> New expr.not_in(column_components.column_components, [value_list.value]) }
+        | {is} column_components T.is value {-> New expr.is(column_components.column_components, value.value) }
+        | {is_not} column_components T.is T.not value {-> New expr.is_not(column_components.column_components, value.value) }
+        | {parens} T.lparen expr T.rparen {-> expr.expr}
+        | {not} T.not expr_factor2 {-> New expr.not(expr_factor2.expr) }
+        ;
+
+    value_list {-> value* }
+        = value value_list_tail* {-> [value.value, value_list_tail.value] }
+        ;
+
+    value_list_tail {-> value }
+        = T.comma value {-> value.value }
+        ;
+
+    value {-> value }
+        = {left_shift} [left]:value lshift [right]:value_factor1 {-> New value.left_shift(left.value, right.value) }
+        | {right_shift} value rshift value_factor1 {-> New value.right_shift(value, value_factor1.value) }
+        | {factor1} value_factor1 {-> value_factor1.value }
+        ;
+
+    value_factor1 {-> value }
+        = {bit_or} [left]:value_factor1 bit_or [right]:value_factor2 {-> New value.bit_or(left.value, right.value) }
+        | {factor2} value_factor2 {-> value_factor2.value }
+        ;
+
+    value_factor2 {-> value }
+        = {bit_xor} [left]:value_factor2 bit_xor [right]:value_factor3 {-> New value.bit_xor(left.value, right.value) }
+        | {factor3} value_factor3 {-> value_factor3.value }
+        ;
+
+    value_factor3 {-> value }
+        = {bit_and} [left]:value_factor3 bit_and [right]:value_factor4 {-> New value.bit_and(left.value, right.value) }
+        | {factor4} value_factor4 {-> value_factor4.value }
+        ;
+
+    value_factor4 {-> value }
+        = {add} [left]:value_factor4 add [right]:value_factor5 {-> New value.add(left.value, right.value) }
+        | {substract} [left]:value_factor4 sub [right]:value_factor5 {-> New value.substract(left.value, right.value) }
+        | {factor5} value_factor5 {-> value_factor5.value }
+        ;
+
+    value_factor5 {-> value }
+        = {multiply} [left]:value_factor5 mul [right]:unary {-> New value.multiply(left.value, right.value) }
+        | {divide} [left]:value_factor5 div [right]:unary {-> New value.divide(left.value, right.value) }
+        | {modulo} [left]:value_factor5 mod [right]:unary {-> New value.modulo(left.value, right.value) }
+        | {factor6} unary {-> unary.value }
+        ;
+
+    unary {-> value }
+        =  {column} column_components {-> New value.column(column_components.column_components) }
+        | {null} T.null {-> New value.null() }
+        | {option} option {-> option.value }
+        | {string} T.string {-> New value.string(T.string) }
+        | {int} T.int {-> New value.int(int) }
+        | {octet} T.octet {-> New value.octet(T.octet) }
+        | {hex} T.hex {-> New value.hex(T.hex) }
+        | {float} T.float {-> New value.float(T.float) }
+        | {scientific} T.scientific {-> New value.scientific(T.scientific) }
+        | {parens} T.lparen value T.rparen {-> value.value }
+        ;
+
+    group_by_clause {-> column_components* }
+        = {group} T.group by group_by_list {-> [group_by_list.column_components] }
+        | {empty} {-> []}
+        ;
+
+    group_by_list {-> column_components* }
+        = column_components group_by_list_tail* {-> [column_components.column_components, group_by_list_tail.column_components] }
+        ;
+
+    group_by_list_tail {-> column_components }
+        = T.comma column_components {-> column_components.column_components}
+        ;
+
+    order_by_clause {-> order_by_item* }
+        = {order} T.order T.by order_by_list {-> [order_by_list.order_by_item] }
+        | {empty} {-> []}
+        ;
+
+    order_by_list {-> order_by_item* }
+        = order_by_item order_by_list_tail* {-> [order_by_item.order_by_item, order_by_list_tail.order_by_item] }
+        ;
+
+    order_by_list_tail {-> order_by_item }
+        = T.comma order_by_item {-> order_by_item.order_by_item }
+        ;
+
+    order_by_item {-> order_by_item }
+        = {desc} column_components T.desc {-> New order_by_item(column_components.column_components, New order.desc()) }
+        | {asc} column_components T.asc {-> New order_by_item(column_components.column_components, New order.asc()) }
+        ;
+
+    limit_clause {-> P.limit }
+        = {count} T.limit limit_field {-> New limit(Null, limit_field.value) }
+        | {offset} T.limit [offset]:limit_field T.comma [count]:limit_field {-> New limit(offset.value, count.value) }
+        | {empty} {-> New limit(Null, Null) }
+        ;
+
+    limit_field {-> value }
+        = {int} int {-> New value.int(int) }
+        | {option} option {-> option.value }
+        ;
+
+    option {-> value }
+        = T.colon identifier {-> New value.option(identifier) }
+        ;
+
+    table {-> table}
+        = {with_alias} table_components table_alias {-> New table(table_components.table_components, table_alias.identifier) }
+        | {without_alias} table_components {-> New table(table_components.table_components, Null) }
+        ;
+
+    table_alias {-> identifier }
+        = as component {-> component.identifier }
+        ;
+
+    table_components {-> table_components }
+        = {schema} [schema]:component [schema_dot]:dot [table]:component {-> New table_components(schema.identifier, table.identifier) }
+        | {table} component {-> New table_components(Null, component.identifier) }
+        ;
+
+    component {-> identifier }
+        = {unquoted} identifier {-> identifier }
+        | {quoted} [left]:quote identifier [right]:quote {-> identifier}
+        ;
+
+    number {-> value }
+        = {int} T.int {-> New value.int(T.int) }
+        | {float} T.float {-> New value.float(T.float) }
+        | {scientific} T.scientific {-> New value.scientific(T.scientific) }
+        | {octet} T.octet {-> New value.octet(T.octet) }
+        | {hex} T.hex {-> New value.hex(T.hex) }
+        ;
+
+Abstract Syntax Tree
+
+    statement
+        = {select} [columns]:column*
+          [table]:table
+          [partitions]:value*
+          [where_condition]:expr?
+          [group_by_columns]:column_components*
+          [order_by_items]:order_by_item*
+          P.limit
+        | {delete} [table]:table [where_condition]:expr? P.limit
+        | {update} [table]:table [columns]:update_column* [where_condition]:expr? P.limit
+        | {insert} [table]:table [columns]:identifier* [rows]:P.row* [update_cloumns]:update_column*
+        ;
+
+    op
+        = {or}
+        | {and}
+        | {lt}
+        | {gt}
+        | {lteq}
+        | {gteq}
+        | {eq}
+        | {not_eq}
+        ;
+
+    expr
+        =
+        | {binary} op [left]:value [right]:value
+        | {between} column_components [left]:value [right]:value
+        | {condition} op [left]:expr [right]:expr
+        | {in} column_components value*
+        | {not_in} column_components value*
+        | {not} expr
+        | {is} column_components value
+        | {is_not} column_components value
+        ;
+
+    column_components = [schema]:identifier? [table]:identifier? [column]:identifier ;
+
+    column = [function]:identifier? [components]:column_components* [alias]:identifier? [distinct]:T.distinct?;
+
+    update_column = [components]:column_components value ;
+
+    table_components = [schema]:identifier? [table]:identifier ;
+
+    table = [components]:table_components [alias]:identifier? ;
+
+    order_by_item = [column]:column_components P.order ;
+
+    limit = [offset]:value? [count]:value? ;
+
+    row = [values]:value+ ;
+
+    order
+        = {desc}
+        | {asc}
+        ;
+
+    value
+        = {identifier} T.identifier
+        | {null}
+        | {option} T.identifier
+        | {int} T.int
+        | {float} T.float
+        | {scientific} T.scientific
+        | {octet} T.octet
+        | {hex} T.hex
+        | {add} [left]:value [right]:value
+        | {substract} [left]:value [right]:value
+        | {multiply} [left]:value [right]:value
+        | {divide} [left]:value [right]:value
+        | {modulo} [left]:value [right]:value
+        | {bit_and} [left]:value [right]:value
+        | {bit_or} [left]:value [right]:value
+        | {bit_xor} [left]:value [right]:value
+        | {bit_invert} value
+        | {left_shift} [left]:value [right]:value
+        | {right_shift} [left]:value [right]:value
+        | {column} column_components
+        | {string} T.string
+        ;
+
+
+
+
+
